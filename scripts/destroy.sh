@@ -12,7 +12,7 @@ terraform -chdir=terraform workspace select "$ENV"
 terraform -chdir=terraform destroy -input=false -auto-approve -var-file="$ROOT/envs/$ENV.tfvars"
 
 if [[ "${2:-}" == "--with-monitoring" ]]; then
-  GF_ADMIN_PASSWORD="${GF_ADMIN_PASSWORD:-unused}" docker compose -f monitoring/docker-compose.yml down -v
+  GF_ADMIN_PASSWORD="${GF_ADMIN_PASSWORD:-x}" docker compose -f monitoring/docker-compose.yml down -v
 fi
 
 echo "Environnement $ENV détruit. Vérification :"

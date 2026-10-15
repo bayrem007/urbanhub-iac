@@ -2,13 +2,66 @@
 
 Microservice web **UrbanHub** (page d'accueil du jumeau numérique urbain) déployé sur une infrastructure décrite en code, sur deux environnements (`dev`, `prod`), avec tests automatiques et supervision.
 
+![Page d'accueil UrbanHub déployée sur l'environnement dev](docs/captures/accueil_dev_20261015-102348.png)
+
+## Démarrage rapide
+
+Depuis un terminal Linux ou WSL2 Ubuntu (prérequis détaillés au §2) :
+
+```bash
+cp .env.example .env             # puis renseigner GF_ADMIN_PASSWORD
+./scripts/deploy.sh dev          # tests -> Terraform -> Ansible -> supervision -> tests
+curl -i http://localhost:8081/   # HTTP 200, page « Environnement : dev »
+./scripts/destroy.sh dev         # destruction de l'environnement
+```
+
+## Sommaire
+
+1. [Plateforme retenue et justification](#1-plateforme-retenue-et-justification)
+2. [Prérequis](#2-prérequis)
+3. [Déploiement — commande unique](#3-déploiement--commande-unique)
+4. [Vérifier que le service répond](#4-vérifier-que-le-service-répond)
+5. [Supervision](#5-supervision)
+6. [Preuve qu'un test en échec arrête la chaîne](#6-preuve-quun-test-en-échec-arrête-la-chaîne)
+7. [Destruction de l'environnement](#7-destruction-de-lenvironnement)
+8. [Livrable](#8-livrable)
+9. [Déclaration d'usage de l'IA](#9-déclaration-dusage-de-lia)
+
+## Architecture
+
+```
+./scripts/deploy.sh <dev|prod>
+ │
+ ├─ 1. Tests pré-déploiement ── terraform fmt · terraform validate · ansible --syntax-check · secrets
+ │
+ ├─ 2. Terraform (workspace <env>, envs/<env>.tfvars)
+ │     ├─ docker_network    urbanhub-<env>-net
+ │     ├─ docker_container  urbanhub-<env>-web   image ubuntu:22.04, gabarit small | medium
+ │     ├─ local_file        ansible/inventory/<env>.ini            (nom + IP injectés)
+ │     └─ local_file        monitoring/prometheus/targets/<env>-*.json
+ │
+ ├─ 3. Ansible (inventaire généré) ── nginx · node_exporter · index.html.j2 · /health · script de boot
+ │
+ ├─ 4. docker compose ── Prometheus · Blackbox exporter · Grafana (communs à dev et prod)
+ │
+ └─ 5. Tests post-déploiement ── HTTP 200 · « UrbanHub » · data-env="<env>" · /health = OK
+
+Supervision :
+  Blackbox exporter ── GET http://host.docker.internal:8081|8082/ ──> nginx         (disponibilité, temps de réponse)
+  Prometheus ────────── scrape host.docker.internal:9101|9102 ─────> node_exporter (CPU, mémoire, réseau)
+  Grafana ───────────── requêtes PromQL ───────────────────────────> Prometheus    (tableau de bord)
+```
+
 ```
 terraform/   Instance, réseau, inventaire Ansible et cibles de supervision (générés)
 ansible/     Playbook : nginx + page d'accueil (modèle Jinja2) + agent de métriques
 envs/        dev.tfvars / prod.tfvars — seul fichier qui change entre environnements
 scripts/     deploy.sh (commande unique), destroy.sh, package.sh, tests/
 monitoring/  Prometheus (+ alertes), Blackbox exporter, Grafana (tableau de bord provisionné)
+docs/        captures d'écran référencées par ce README
 ```
+
+> Les captures de ce README sont versionnées dans `docs/captures/`. Dans l'archive de rendu, elles se trouvent dans `01_depot_git/docs/captures/` et, avec toutes les autres preuves, dans `02_preuves/`.
 
 ## 1. Plateforme retenue et justification
 
@@ -116,12 +169,49 @@ terraform -chdir=terraform workspace select dev && terraform -chdir=terraform ou
 docker ps --filter label=project=urbanhub
 ```
 
+Résultat obtenu (extrait de `preuves/reponse_environnements_20261015-103500.txt`) :
+
+```
+===== dev : curl -i http://localhost:8081/ =====
+HTTP/1.1 200 OK
+<body data-env="dev">
+      <span class="badge">Environnement : dev</span>
+            <dt>Adresse privée</dt><dd>172.21.0.2</dd>
+            <dt>Gabarit</dt><dd>small</dd>
+--- curl http://localhost:8081/health
+OK
+
+===== prod : curl -i http://localhost:8082/ =====
+HTTP/1.1 200 OK
+<body data-env="prod">
+      <span class="badge">Environnement : prod</span>
+            <dt>Adresse privée</dt><dd>172.23.0.2</dd>
+            <dt>Gabarit</dt><dd>medium</dd>
+--- curl http://localhost:8082/health
+OK
+
+===== Sonde Blackbox (probe_success) =====
+  dev http://host.docker.internal:8081/ = 1
+  prod http://host.docker.internal:8082/ = 1
+Alertes actives : aucune
+```
+
+Même code, même commande ; seul `envs/<env>.tfvars` change. La couleur d'accent de la page (bleu en dev, vert en prod) et le bloc *Instance* permettent d'identifier l'environnement d'un coup d'œil :
+
+| dev — `http://localhost:8081` | prod — `http://localhost:8082` |
+|---|---|
+| ![Page d'accueil dev](docs/captures/accueil_dev_20261015-102348.png) | ![Page d'accueil prod](docs/captures/accueil_prod_20261015-102348.png) |
+
 ## 5. Supervision
 
 - Grafana : <http://localhost:3000> (utilisateur `admin`, mot de passe = `GF_ADMIN_PASSWORD`) → dossier *UrbanHub* → **UrbanHub — Supervision**.
   Panneaux : disponibilité, alertes actives, **processeur**, **mémoire**, **bande passante réseau** (entrant/sortant), **temps de réponse HTTP** (avec la ligne de seuil). Filtre par environnement.
 - Prometheus : <http://localhost:9090/alerts> (règles dans `monitoring/prometheus/alerts.yml`).
 - Collecte : `node_exporter` installé par Ansible sur l'instance (agent système) ; temps de réponse mesuré **de l'extérieur** par Blackbox exporter, comme le ressentirait un utilisateur.
+
+Tableau de bord pendant le test d'alerte (nginx arrêté sur dev, 30 dernières minutes) : dev est **DOWN**, prod **UP**, et l'alerte `UrbanHubDown` est *firing* pour dev. Les pics de CPU vers 10:00 et 10:10 correspondent aux `apt-get` des déploiements ; ils restent brefs et n'atteignent pas la durée de 5 min de `UrbanHubHighCPU`.
+
+![Tableau de bord Grafana UrbanHub — Supervision, alerte active sur dev](docs/captures/dashboard_grafana_alerte_dev_20261015-101816.png)
 
 ### Alertes et justification des seuils
 
@@ -140,6 +230,8 @@ docker exec urbanhub-dev-web service nginx stop    # UrbanHubDown passe "pending
 
 Chronologie observée (`preuves/alerte_UrbanHubDown_*.txt`) : nginx arrêté à 10:13:25, alerte **pending** à 10:14:06, **firing** à 10:15:08 ; l'environnement prod reste sans alerte. Le délai d'environ 40 s avant *pending* est attendu : jusqu'à 15 s pour la prochaine collecte (`scrape_interval`), puis jusqu'à 15 s pour la prochaine évaluation de la règle (`evaluation_interval`). La minute suivante correspond au `for: 1m` de la règle.
 
+![Prometheus : UrbanHubDown firing, les deux autres règles inactives](docs/captures/alertes_prometheus_firing_20261015-101816.png)
+
 ## 6. Preuve qu'un test en échec arrête la chaîne
 
 ```bash
@@ -152,6 +244,24 @@ printf 'output "test_echec" {\n  value = var.inexistante\n}\n' > terraform/zz_ec
 rm terraform/zz_echec.tf
 ./scripts/deploy.sh dev     # => tous les tests passent, DÉPLOIEMENT dev RÉUSSI
 ```
+
+Exécution en échec (extrait de `preuves/deploy_dev_20261015-100914.log`, codes couleur retirés) :
+
+```
+=== [2026-10-15 10:09:15] ÉTAPE : tests pré-déploiement (validation du code) ===
+[TEST 1] Fichier de variables de l'environnement présent
+  [OK] envs/dev.tfvars
+[TEST 2] Format du code Terraform (terraform fmt -check)
+  [OK] format conforme
+[TEST 3] Validation syntaxique et sémantique (terraform validate)
+│ Error: Reference to undeclared input variable
+│   on zz_echec.tf line 2, in output "test_echec":
+│    2:   value = var.inexistante
+
+!!! [2026-10-15 10:09:19] ÉCHEC à l'étape « tests pré-déploiement (validation du code) » — chaîne de déploiement ARRÊTÉE (env=dev)
+```
+
+Le journal s'arrête là : aucune étape Terraform `apply`, Ansible ou supervision n'est lancée. L'exécution corrigée (`preuves/deploy_dev_20261015-100926.log`), lancée 7 s plus tard après suppression du fichier fautif, passe les 5 tests et se termine par `DÉPLOIEMENT dev RÉUSSI`.
 
 ## 7. Destruction de l'environnement
 

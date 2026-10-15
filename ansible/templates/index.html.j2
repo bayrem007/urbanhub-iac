@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- {{ ansible_managed }} -->
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_title }} [{{ env_name }}]</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    main { max-width: 760px; margin: 0 auto; padding: 48px 16px; }
+    h1 { margin: 0 0 8px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 600;
+             background: {{ '#16a34a' if env_name == 'prod' else '#2563eb' }}; color: #fff; }
+    table { margin-top: 24px; border-collapse: collapse; width: 100%; }
+    td { padding: 8px; border-bottom: 1px solid #334155; }
+    td:first-child { color: #94a3b8; width: 40%; }
+  </style>
+</head>
+<body data-env="{{ env_name }}">
+  <main>
+    <h1>{{ app_title }}</h1>
+    <span class="badge">Environnement : {{ env_name }}</span>
+    <p>Collecte et exploitation des données de la ville : capteurs IoT, trafic, pollution, bruit, incidents, énergie.</p>
+    <table>
+      <tr><td>Instance</td><td>{{ inventory_hostname }}</td></tr>
+      <tr><td>Adresse privée</td><td>{{ instance_ip }}</td></tr>
+      <tr><td>Gabarit</td><td>{{ instance_type }}</td></tr>
+      <tr><td>Système</td><td>{{ ansible_distribution }} {{ ansible_distribution_version }}</td></tr>
+      <tr><td>Déployé le</td><td>{{ ansible_date_time.iso8601 }}</td></tr>
+    </table>
+  </main>
+</body>
+</html>

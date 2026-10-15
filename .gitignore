@@ -1,0 +1,18 @@
+# Secrets
+.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+crash.log
+
+# Fichiers générés par Terraform
+ansible/inventory/*.ini
+monitoring/prometheus/targets/*.json
+
+# Preuves et livrable (rendus hors dépôt, dans l'archive)
+preuves/*
+!preuves/.gitkeep
+dist/

@@ -1,0 +1,10 @@
+# FICHIER GÉNÉRÉ PAR TERRAFORM — ne pas modifier à la main.
+[web]
+${instance_name} ansible_host=${instance_name} instance_ip=${instance_ip}
+
+[web:vars]
+ansible_connection=community.docker.docker
+ansible_python_interpreter=/usr/bin/python3
+env_name=${env}
+instance_type=${instance_type}
+public_url=http://localhost:${http_port}

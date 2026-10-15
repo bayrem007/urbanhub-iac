@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # Métriques système de chaque instance (CPU, mémoire, réseau)
+  - job_name: node
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/*-node.json"]
+        refresh_interval: 15s
+
+  # Sonde HTTP externe : disponibilité + temps de réponse
+  - job_name: http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/*-http.json"]
+        refresh_interval: 15s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

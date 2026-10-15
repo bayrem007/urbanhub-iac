@@ -1,0 +1,29 @@
+groups:
+  - name: urbanhub
+    rules:
+      # Seuils justifiés dans le README (section Supervision).
+      - alert: UrbanHubDown
+        expr: probe_success{job="http"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "UrbanHub {{ $labels.env }} ne répond plus"
+          description: "La sonde HTTP échoue depuis plus d'1 minute sur {{ $labels.instance }}."
+
+      - alert: UrbanHubSlowResponse
+        expr: probe_duration_seconds{job="http"} > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "UrbanHub {{ $labels.env }} : temps de réponse > 500 ms"
+          description: "Temps de réponse {{ $value | humanizeDuration }} depuis 2 minutes."
+
+      - alert: UrbanHubHighCPU
+        expr: 100 * (1 - avg by (env) (rate(node_cpu_seconds_total{mode="idle"}[2m]))) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "UrbanHub {{ $labels.env }} : CPU > 80 % depuis 5 minutes"

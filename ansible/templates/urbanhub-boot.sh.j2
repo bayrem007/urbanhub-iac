@@ -1,0 +1,16 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Exécuté au démarrage de l'instance (commande de démarrage définie dans Terraform)
+# et par Ansible. Idempotent : ne relance un service que s'il est arrêté.
+set -u
+
+if ! pgrep -x nginx >/dev/null; then
+  service nginx start >/dev/null && echo "nginx started"
+fi
+
+if ! pgrep -f /usr/bin/prometheus-node-exporter >/dev/null; then
+  start-stop-daemon --start --background --make-pidfile \
+    --pidfile /run/node-exporter.pid \
+    --exec /usr/bin/prometheus-node-exporter -- --web.listen-address=:9100
+  echo "node-exporter started"
+fi

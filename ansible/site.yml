@@ -1,0 +1,87 @@
+---
+# Configuration de l'instance UrbanHub : serveur web + agent de métriques.
+# Inventaire : ansible/inventory/<env>.ini (généré par Terraform).
+- name: Configurer le serveur web UrbanHub
+  hosts: web
+  gather_facts: false
+  become: false # l'instance tourne en root (conteneur) ; pas d'escalade
+
+  vars:
+    app_title: "UrbanHub — Jumeau numérique urbain"
+    web_root: /var/www/html
+
+  pre_tasks:
+    - name: Installer python3 si l'image est minimale (prérequis Ansible)
+      ansible.builtin.raw: >-
+        test -e /usr/bin/python3 ||
+        (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3)
+      changed_when: false
+
+    - name: Collecter les faits de l'instance
+      ansible.builtin.setup:
+
+  tasks:
+    - name: Installer le serveur web et l'agent de métriques
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - prometheus-node-exporter
+          - procps
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Publier la page d'accueil UrbanHub à partir du modèle
+      ansible.builtin.template:
+        src: templates/index.html.j2
+        dest: "{{ web_root }}/index.html"
+        mode: "0644"
+      notify: Recharger nginx
+
+    - name: Publier le point de santé /health
+      ansible.builtin.copy:
+        content: "OK\n"
+        dest: "{{ web_root }}/health"
+        mode: "0644"
+
+    - name: Installer le script de démarrage de l'instance (activation au boot)
+      ansible.builtin.template:
+        src: templates/urbanhub-boot.sh.j2
+        dest: /usr/local/bin/urbanhub-boot.sh
+        mode: "0755"
+
+    - name: Démarrer nginx et l'activer au démarrage
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Démarrer l'agent de métriques (via le script de boot, idempotent)
+      ansible.builtin.command: /usr/local/bin/urbanhub-boot.sh
+      register: boot_result
+      changed_when: "'started' in boot_result.stdout"
+
+  handlers:
+    - name: Recharger nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+
+  post_tasks:
+    - name: Vérifier localement que la page répond
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        return_content: true
+      register: home
+      retries: 5
+      delay: 2
+      until: home.status == 200
+
+    - name: Contrôler le contenu de la page
+      ansible.builtin.assert:
+        that:
+          - "'UrbanHub' in home.content"
+          - "'data-env=\"' ~ env_name ~ '\"' in home.content"
+        success_msg: "Page UrbanHub servie pour l'environnement {{ env_name }}"

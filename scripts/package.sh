@@ -16,6 +16,8 @@ mkdir -p "$OUT/02_preuves"
 
 git clone -q "$ROOT" "$OUT/01_depot_git"
 git -C "$OUT/01_depot_git" remote remove origin
+# Le reflog du clone enregistre l'identité Git locale (user.name / user.email) et le chemin source
+rm -rf "$OUT/01_depot_git/.git/logs"
 cp README.md "$OUT/03_README.md"
 cp -R preuves/. "$OUT/02_preuves/" 2>/dev/null || true
 rm -f "$OUT/02_preuves/.gitkeep"
@@ -30,9 +32,17 @@ command -v exiftool >/dev/null && exiftool -q -overwrite_original -all= "$OUT"/0
 
 echo "Identités présentes dans l'historique Git (doivent être anonymes) :"
 git -C "$OUT/01_depot_git" log --format='  %an <%ae>' | sort -u
-if grep -RIl -i -e "$(whoami)" "$OUT" --exclude-dir=.git >/dev/null 2>&1; then
-  echo "ATTENTION : '$(whoami)' apparaît encore dans :"; grep -RIl -i -e "$(whoami)" "$OUT" --exclude-dir=.git
-fi
+# Recherche, y compris dans .git, du nom d'utilisateur et de l'identité Git locale
+IDS=("$(whoami)")
+for k in user.name user.email; do
+  v="$(git config --get "$k" || true)"; [[ -n "$v" ]] && IDS+=("$v")
+done
+for id in "${IDS[@]}"; do
+  if grep -RIl -i -F -e "$id" "$OUT" >/dev/null 2>&1; then
+    echo "ATTENTION : une identité locale apparaît encore dans :"; grep -RIl -i -F -e "$id" "$OUT"
+    exit 1
+  fi
+done
 
 (cd "$ROOT/dist" && zip -qr "$NAME.zip" "$NAME")
 echo "Archive : dist/$NAME.zip"

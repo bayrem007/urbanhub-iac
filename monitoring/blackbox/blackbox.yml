@@ -4,6 +4,8 @@ modules:
     timeout: 5s
     http:
       method: GET
+      # host.docker.internal se résout aussi en IPv6 (non routable sous Docker Desktop)
+      preferred_ip_protocol: ip4
       valid_status_codes: [200]
       fail_if_body_not_matches_regexp:
         - "UrbanHub"

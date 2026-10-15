@@ -209,6 +209,10 @@ Même code, même commande ; seul `envs/<env>.tfvars` change. La couleur d'accen
 - Prometheus : <http://localhost:9090/alerts> (règles dans `monitoring/prometheus/alerts.yml`).
 - Collecte : `node_exporter` installé par Ansible sur l'instance (agent système) ; temps de réponse mesuré **de l'extérieur** par Blackbox exporter, comme le ressentirait un utilisateur.
 
+Tableau de bord pendant le test d'alerte (nginx arrêté sur dev, 30 dernières minutes) : dev est **DOWN**, prod **UP**, et l'alerte `UrbanHubDown` est *firing* pour dev. Les pics de CPU vers 10:00 et 10:10 correspondent aux `apt-get` des déploiements ; ils restent brefs et n'atteignent pas la durée de 5 min de `UrbanHubHighCPU`.
+
+![Tableau de bord Grafana UrbanHub — Supervision, alerte active sur dev](docs/captures/dashboard_grafana_alerte_dev_20261015-101816.png)
+
 ### Alertes et justification des seuils
 
 | Alerte | Condition | Justification |
@@ -226,6 +230,8 @@ docker exec urbanhub-dev-web service nginx stop    # UrbanHubDown passe "pending
 
 Chronologie observée (`preuves/alerte_UrbanHubDown_*.txt`) : nginx arrêté à 10:13:25, alerte **pending** à 10:14:06, **firing** à 10:15:08 ; l'environnement prod reste sans alerte. Le délai d'environ 40 s avant *pending* est attendu : jusqu'à 15 s pour la prochaine collecte (`scrape_interval`), puis jusqu'à 15 s pour la prochaine évaluation de la règle (`evaluation_interval`). La minute suivante correspond au `for: 1m` de la règle.
 
+![Prometheus : UrbanHubDown firing, les deux autres règles inactives](docs/captures/alertes_prometheus_firing_20261015-101816.png)
+
 ## 6. Preuve qu'un test en échec arrête la chaîne
 
 ```bash
@@ -238,6 +244,24 @@ printf 'output "test_echec" {\n  value = var.inexistante\n}\n' > terraform/zz_ec
 rm terraform/zz_echec.tf
 ./scripts/deploy.sh dev     # => tous les tests passent, DÉPLOIEMENT dev RÉUSSI
 ```
+
+Exécution en échec (extrait de `preuves/deploy_dev_20261015-100914.log`, codes couleur retirés) :
+
+```
+=== [2026-10-15 10:09:15] ÉTAPE : tests pré-déploiement (validation du code) ===
+[TEST 1] Fichier de variables de l'environnement présent
+  [OK] envs/dev.tfvars
+[TEST 2] Format du code Terraform (terraform fmt -check)
+  [OK] format conforme
+[TEST 3] Validation syntaxique et sémantique (terraform validate)
+│ Error: Reference to undeclared input variable
+│   on zz_echec.tf line 2, in output "test_echec":
+│    2:   value = var.inexistante
+
+!!! [2026-10-15 10:09:19] ÉCHEC à l'étape « tests pré-déploiement (validation du code) » — chaîne de déploiement ARRÊTÉE (env=dev)
+```
+
+Le journal s'arrête là : aucune étape Terraform `apply`, Ansible ou supervision n'est lancée. L'exécution corrigée (`preuves/deploy_dev_20261015-100926.log`), lancée 7 s plus tard après suppression du fichier fautif, passe les 5 tests et se termine par `DÉPLOIEMENT dev RÉUSSI`.
 
 ## 7. Destruction de l'environnement
 

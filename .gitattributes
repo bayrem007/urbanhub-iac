@@ -1,0 +1,3 @@
+# Fins de ligne LF pour les scripts et la configuration (bash, YAML, Terraform)
+* text=auto eol=lf
+*.png binary

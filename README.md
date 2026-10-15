@@ -32,18 +32,37 @@ Limites assumées de la simulation :
 - Ansible se connecte par le plugin `community.docker.docker` (équivalent d'un accès SSH).
 - Il n'y a pas de `systemd` dans un conteneur : l'« activation au démarrage » est assurée par `update-rc.d` (module `service`, `enabled: true`) **et** par le script `/usr/local/bin/urbanhub-boot.sh` installé par Ansible, que la commande de démarrage de l'instance (définie dans Terraform) exécute à chaque redémarrage. Vérifiable avec `docker restart urbanhub-dev-web` puis `curl localhost:8081`.
 - `node_exporter` lit `/proc` : le **réseau** mesuré est bien celui de l'instance, mais le **CPU et la mémoire** reflètent la machine hôte Docker (comme le ferait une VM qui partage son hyperviseur). Sur un vrai cloud, ces métriques seraient celles de la VM.
+- La supervision joint les instances par `host.docker.internal`. Sous Docker Desktop, ce nom se résout aussi en une adresse IPv6 non routable depuis les conteneurs : la sonde Blackbox est donc forcée en IPv4 (`preferred_ip_protocol: ip4` dans `monitoring/blackbox/blackbox.yml`). Sans ce réglage, `probe_success` reste à 0 et `UrbanHubDown` se déclenche à tort.
 
 ## 2. Prérequis
 
-| Outil | Version testée / minimale |
-|---|---|
-| Docker Engine ou Docker Desktop (avec `docker compose` v2) | 24+ |
-| Terraform | ≥ 1.5 |
-| Ansible (`ansible-core`) | ≥ 2.15 |
-| curl, bash | — |
+| Outil | Version minimale | Version testée |
+|---|---|---|
+| Docker Engine ou Docker Desktop (avec `docker compose` v2) | 24 | Docker Desktop 29.6.2 |
+| Terraform | 1.5 | 1.16.6 |
+| Ansible (`ansible-core`) | 2.15 | 2.16.3 |
+| curl, bash, git | — | — |
+| zip (uniquement pour `scripts/package.sh`) | — | — |
 
-Sous Windows : utiliser WSL2 (Ansible ne s'exécute pas nativement sous Windows).
+Les versions des fournisseurs Terraform sont figées par `terraform/.terraform.lock.hcl` (versionné).
 Ports libres sur l'hôte : 8081, 8082 (application), 9101, 9102 (métriques), 9090 (Prometheus), 3000 (Grafana).
+
+### Sous Windows (WSL2)
+
+Ansible ne s'exécute pas nativement sous Windows : **toutes les commandes se lancent depuis un terminal WSL2 Ubuntu**, dans le dossier du dépôt (ex. `/mnt/c/.../urbanhub-cloud`).
+
+1. Docker Desktop → *Settings → General* : « Use the WSL 2 based engine » coché.
+2. *Settings → Resources → WSL integration* : activer **Ubuntu**, puis *Apply & restart*. Vérifier dans Ubuntu : `docker version` doit afficher la section *Server* (si `/var/run/docker.sock` est absent, relancer la distribution : `wsl --terminate Ubuntu` depuis Windows).
+3. Installer Terraform et zip **dans Ubuntu** (dépôt apt officiel HashiCorp) :
+
+   ```bash
+   sudo apt-get update && sudo apt-get install -y gnupg wget lsb-release zip ansible
+   wget -qO- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+   echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+   sudo apt-get update && sudo apt-get install -y terraform
+   ```
+
+Le fichier `.gitattributes` force les fins de ligne LF sur les scripts : un clone sous Windows reste exécutable par bash.
 
 ### Variables sensibles
 
@@ -119,6 +138,8 @@ docker exec urbanhub-dev-web service nginx stop    # UrbanHubDown passe "pending
 ./scripts/deploy.sh dev                             # le redéploiement rétablit le service (idempotence)
 ```
 
+Chronologie observée (`preuves/alerte_UrbanHubDown_*.txt`) : nginx arrêté à 10:13:25, alerte **pending** à 10:14:06, **firing** à 10:15:08 ; l'environnement prod reste sans alerte. Le délai d'environ 40 s avant *pending* est attendu : jusqu'à 15 s pour la prochaine collecte (`scrape_interval`), puis jusqu'à 15 s pour la prochaine évaluation de la règle (`evaluation_interval`). La minute suivante correspond au `for: 1m` de la règle.
+
 ## 6. Preuve qu'un test en échec arrête la chaîne
 
 ```bash
@@ -144,6 +165,32 @@ Le script vérifie qu'aucun conteneur de l'environnement ne subsiste. L'image `u
 ## 8. Livrable
 
 `./scripts/package.sh` produit `dist/EC04-P1_NomPrenom_UrbanHub_Cloud.zip` (clone du dépôt avec historique, preuves avec chemins personnels masqués, README) et affiche les identités présentes dans l'historique Git pour contrôle d'anonymat.
+
+À lancer **depuis WSL / Linux** (il utilise `zip`, `sed -i` et `whoami`). Le nom de l'archive se passe en argument pour suivre la consigne de nommage communiquée le jour de l'épreuve : `./scripts/package.sh <NomArchive>`.
+
+Arborescence de l'archive :
+
+```
+EC04-P1_NomPrenom_UrbanHub_Cloud.zip
+└── EC04-P1_NomPrenom_UrbanHub_Cloud/
+    ├── 01_depot_git/   dépôt cloné avec son dossier .git (historique complet)
+    ├── 02_preuves/     journaux et captures (copie de preuves/)
+    └── 03_README.md    copie à l'identique de ce README
+```
+
+### 8.1 Index des preuves (`02_preuves/`)
+
+Les fichiers sont horodatés (`AAAAMMJJ-HHMMSS`) ; chaque journal `deploy_*` contient aussi l'heure de chaque étape.
+
+| Preuve demandée | Fichier(s) |
+|---|---|
+| Réponse du service | `reponse_environnements_*.txt` (`curl -i`, `/health`, conteneurs, état des sondes) ; `accueil_dev_*.png`, `accueil_prod_*.png` |
+| Tableau de bord | `dashboard_grafana_alerte_dev_*.png` (CPU, mémoire, réseau, temps de réponse, disponibilité) |
+| Alerte | `alerte_UrbanHubDown_*.txt` (chronologie inactive → pending → firing) ; `alertes_prometheus_firing_*.png` |
+| Test en échec qui arrête la commande | `deploy_dev_20261015-100914.log` (TEST 3 `terraform validate` en échec, chaîne arrêtée avant `apply`) |
+| Exécution corrigée | `deploy_dev_20261015-100926.log` |
+| Réponse de chaque environnement | `deploy_dev_*.log` / `deploy_prod_*.log` (tests post-déploiement) ; `reponse_environnements_*.txt` |
+| Échec réel non provoqué (incident réseau) | `deploy_prod_20261015-100031.log` : résolution DNS impossible pendant `apt-get`, chaîne arrêtée à l'étape Ansible ; relance sans modification réussie (`deploy_prod_20261015-100803.log`) |
 
 ## 9. Déclaration d'usage de l'IA
 

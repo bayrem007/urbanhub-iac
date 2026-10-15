@@ -209,10 +209,6 @@ Même code, même commande ; seul `envs/<env>.tfvars` change. La couleur d'accen
 - Prometheus : <http://localhost:9090/alerts> (règles dans `monitoring/prometheus/alerts.yml`).
 - Collecte : `node_exporter` installé par Ansible sur l'instance (agent système) ; temps de réponse mesuré **de l'extérieur** par Blackbox exporter, comme le ressentirait un utilisateur.
 
-Tableau de bord pendant le test d'alerte (nginx arrêté sur dev, 30 dernières minutes) : dev est **DOWN**, prod **UP**, et l'alerte `UrbanHubDown` est *firing* pour dev. Les pics de CPU vers 10:00 et 10:10 correspondent aux `apt-get` des déploiements ; ils restent brefs et n'atteignent pas la durée de 5 min de `UrbanHubHighCPU`.
-
-![Tableau de bord Grafana UrbanHub — Supervision, alerte active sur dev](docs/captures/dashboard_grafana_alerte_dev_20261015-101816.png)
-
 ### Alertes et justification des seuils
 
 | Alerte | Condition | Justification |
@@ -230,8 +226,6 @@ docker exec urbanhub-dev-web service nginx stop    # UrbanHubDown passe "pending
 
 Chronologie observée (`preuves/alerte_UrbanHubDown_*.txt`) : nginx arrêté à 10:13:25, alerte **pending** à 10:14:06, **firing** à 10:15:08 ; l'environnement prod reste sans alerte. Le délai d'environ 40 s avant *pending* est attendu : jusqu'à 15 s pour la prochaine collecte (`scrape_interval`), puis jusqu'à 15 s pour la prochaine évaluation de la règle (`evaluation_interval`). La minute suivante correspond au `for: 1m` de la règle.
 
-![Prometheus : UrbanHubDown firing, les deux autres règles inactives](docs/captures/alertes_prometheus_firing_20261015-101816.png)
-
 ## 6. Preuve qu'un test en échec arrête la chaîne
 
 ```bash
@@ -244,24 +238,6 @@ printf 'output "test_echec" {\n  value = var.inexistante\n}\n' > terraform/zz_ec
 rm terraform/zz_echec.tf
 ./scripts/deploy.sh dev     # => tous les tests passent, DÉPLOIEMENT dev RÉUSSI
 ```
-
-Exécution en échec (extrait de `preuves/deploy_dev_20261015-100914.log`, codes couleur retirés) :
-
-```
-=== [2026-10-15 10:09:15] ÉTAPE : tests pré-déploiement (validation du code) ===
-[TEST 1] Fichier de variables de l'environnement présent
-  [OK] envs/dev.tfvars
-[TEST 2] Format du code Terraform (terraform fmt -check)
-  [OK] format conforme
-[TEST 3] Validation syntaxique et sémantique (terraform validate)
-│ Error: Reference to undeclared input variable
-│   on zz_echec.tf line 2, in output "test_echec":
-│    2:   value = var.inexistante
-
-!!! [2026-10-15 10:09:19] ÉCHEC à l'étape « tests pré-déploiement (validation du code) » — chaîne de déploiement ARRÊTÉE (env=dev)
-```
-
-Le journal s'arrête là : aucune étape Terraform `apply`, Ansible ou supervision n'est lancée. L'exécution corrigée (`preuves/deploy_dev_20261015-100926.log`), lancée 7 s plus tard après suppression du fichier fautif, passe les 5 tests et se termine par `DÉPLOIEMENT dev RÉUSSI`.
 
 ## 7. Destruction de l'environnement
 
@@ -302,26 +278,47 @@ Les fichiers sont horodatés (`AAAAMMJJ-HHMMSS`) ; chaque journal `deploy_*` con
 | Réponse de chaque environnement | `deploy_dev_*.log` / `deploy_prod_*.log` (tests post-déploiement) ; `reponse_environnements_*.txt` |
 | Échec réel non provoqué (incident réseau) | `deploy_prod_20261015-100031.log` : résolution DNS impossible pendant `apt-get`, chaîne arrêtée à l'étape Ansible ; relance sans modification réussie (`deploy_prod_20261015-100803.log`) |
 
-## 9. Déclaration d'usage de l'IA
+## 9. Déclaration d’usage de l’IA
 
 ### 9.1 Outils utilisés
-- **Claude (Anthropic), modèle Claude Opus 5.5**, plateforme **WEB** (application claude.ai, mode agent générant des fichiers).
-- [À compléter si utilisé : autre outil, ex. Copilot dans l'IDE]
 
-### 9.2 Périmètre d'utilisation
-- Génération initiale de la structure du dépôt et des fichiers : Terraform, playbook et modèles Ansible, scripts `deploy.sh` / `destroy.sh` / `package.sh` et tests, configuration Prometheus / Blackbox / Grafana, trame de ce README.
-- [À compléter : débogage effectué avec l'IA pendant l'épreuve, le cas échéant]
+- **Claude (Anthropic), modèle Claude Opus 5.5**, utilisé via la plateforme web [claude.ai](https://claude.ai), notamment pour l’analyse du sujet, l’aide à la réflexion architecturale et la génération initiale des fichiers du projet.
 
-### 9.3 Démarche de Context Engineering / prompts majeurs
-1. Fourniture du **sujet complet de l'épreuve (PDF)** comme contexte, avec la consigne de produire un dépôt couvrant les parties A et B et les contraintes de livraison (anonymat, secrets, arborescence du ZIP).
-2. Contraintes imposées : plateforme exécutable sur un poste personnel sans compte cloud, une commande unique, inventaire **généré** par Terraform, seul le fichier de variables changeant entre environnements.
-3. [À compléter : prompts de correction formulés après les premières exécutions, ex. messages d'erreur fournis à l'IA]
+### 9.2 Périmètre d’utilisation
 
-### 9.4 Audit des réponses : validé / modifié / rejeté
-- **Choix de plateforme (Docker simulé) — validé** : couvre toutes les exigences sans secret cloud ni coût, et la destruction est vérifiable. Limites (pas de systemd, métriques CPU/mémoire de l'hôte) identifiées et documentées au §1 plutôt que masquées.
-- **Inventaire généré par `local_file` + `templatefile`** — validé : l'IP provient de `docker_container.web.network_data[0].ip_address`, aucune saisie manuelle ; vérifié en lisant `ansible/inventory/dev.ini` après `apply`.
-- **Workspaces Terraform par environnement** — validé : sans eux, un `apply` avec `prod.tfvars` aurait *remplacé* l'instance dev (même état) au lieu d'en créer une seconde.
-- **Sécurité / secrets** — vérifié : le seul secret (mot de passe Grafana) passe par `GF_ADMIN_PASSWORD`, `.env` est dans `.gitignore`, `docker compose` refuse de démarrer si la variable est absente (`${…:?}`), et un test bloque tout secret valorisé dans le dépôt.
-- **Arrêt de la chaîne sur échec** — vérifié : `set -Eeuo pipefail` + `trap ERR` ; démontré au §6 (preuves dans `02_preuves`).
-- **Script de boot** — vérifié : idempotent (`pgrep` avant tout démarrage), `changed_when` pour qu'Ansible ne signale un changement que si un service a réellement été démarré.
-- [À compléter : éléments corrigés ou rejetés pendant l'épreuve, ex. erreur rencontrée à l'exécution et correction apportée]
+L’IA a été utilisée comme un outil d’assistance à la conception et à l’implémentation initiale du projet. Son utilisation s’est déroulée en plusieurs étapes :
+
+- **Analyse du besoin :** transmission de l’énoncé complet de l’épreuve afin de mieux comprendre les objectifs, les exigences fonctionnelles, les contraintes techniques et les livrables attendus.
+- **Recherche et comparaison :** exploration des outils, technologies et approches envisageables, avec une comparaison de leurs avantages, de leurs limites et de leur adéquation avec le contexte de l’épreuve.
+- **Réflexion architecturale :** étude de différentes solutions pour l’infrastructure, l’automatisation du déploiement, la gestion des environnements, la supervision et la sécurité.
+- **Génération initiale :** après avoir étudié les propositions et confirmé les choix techniques et architecturaux retenus, utilisation de l’IA pour générer la structure initiale du dépôt et une première version des fichiers du projet.
+- **Support à l’implémentation :** production d’une base de travail comprenant les fichiers Terraform, les playbooks et modèles Ansible, les scripts d’automatisation, la configuration de supervision, les tests et une première trame de documentation.
+
+### 9.3 Démarche de Context Engineering et de Prompt Engineering
+
+L’utilisation de l’IA a suivi une démarche progressive, fondée sur l’apport de contexte, la formulation de contraintes précises et la validation des propositions.
+
+1. **Fourniture du contexte :** partage de l’énoncé complet de l’épreuve au format PDF afin de permettre à l’IA d’identifier les objectifs, les contraintes, les exigences de livraison et les critères à respecter.
+2. **Collecte et comparaison des informations :** exploration des différentes technologies et solutions possibles, notamment pour l’infrastructure, l’orchestration, la configuration des services et la supervision. Les propositions ont été comparées en fonction des besoins du projet et des contraintes d’exécution.
+3. **Définition des choix architecturaux :** analyse des différentes approches proposées, puis sélection et confirmation des choix techniques avant de demander la génération du projet. Les contraintes retenues comprenaient notamment l’exécution sur un poste personnel sans dépendance à un compte cloud, l’automatisation du déploiement et la séparation des environnements.
+4. **Génération de la version initiale :** formulation de consignes précisant l’architecture retenue, l’organisation attendue du dépôt, le rôle des différents fichiers et les exigences de sécurité. L’IA a ensuite généré une première structure fonctionnelle destinée à servir de base au développement et aux vérifications.
+5. **Relecture et validation :** examen des fichiers produits, vérification de leur cohérence avec l’énoncé et contrôle des mécanismes importants, notamment la gestion des secrets, la génération de l’inventaire Ansible, l’isolation des environnements et le comportement des scripts en cas d’échec.
+
+### 9.4 Audit des réponses : décisions validées, vérifiées et documentées
+
+Les propositions générées par l’IA ont été considérées comme des suggestions techniques, et non comme des résultats automatiquement fiables. Les décisions ont été évaluées selon leur pertinence par rapport au sujet et aux contraintes du projet.
+
+- **Plateforme d’exécution — choix validé :** recours à Docker pour permettre une démonstration locale sans compte cloud ni coût d’infrastructure. Les limites de cette approche, notamment concernant systemd et les métriques CPU/mémoire de l’hôte, ont été identifiées et documentées.
+- **Génération de l’inventaire Ansible — choix vérifié :** utilisation de Terraform avec `local_file` et `templatefile` pour produire automatiquement l’inventaire à partir de l’adresse IP du conteneur créé, évitant ainsi une saisie manuelle.
+- **Séparation des environnements — choix validé :** utilisation des workspaces Terraform afin de maintenir des états distincts pour les environnements, notamment `dev` et `prod`.
+- **Gestion des secrets — mesures vérifiées :** utilisation de la variable `GF_ADMIN_PASSWORD`, exclusion du fichier `.env` via `.gitignore`, contrôle de la présence de la variable au démarrage et test destiné à détecter les secrets renseignés directement dans le dépôt.
+- **Gestion des erreurs — mécanisme vérifié :** utilisation de `set -Eeuo pipefail` et de `trap ERR` pour interrompre la chaîne d’automatisation en cas d’échec, avec des preuves documentées dans le dossier `02_preuves`.
+- **Idempotence du démarrage — comportement vérifié :** contrôle de l’état des processus avant leur démarrage et utilisation de `changed_when` dans Ansible pour limiter la déclaration de changements aux opérations réellement effectuées.
+
+### 9.5 Responsabilité et validation humaine
+
+L’IA a contribué à accélérer la phase de recherche, de conception et de génération initiale. Cependant, la génération de fichiers ne constitue pas, à elle seule, une preuve de conformité ou de bon fonctionnement.
+
+Les choix architecturaux ont été étudiés et confirmés avant la génération de la première version. Les propositions produites ont ensuite été examinées au regard des exigences de l’épreuve, et les mécanismes importants ont fait l’objet de vérifications techniques. La responsabilité des choix retenus, de leur justification et de la validation finale du livrable reste humaine.
+
+L’objectif de cette démarche était d’utiliser l’IA comme un assistant technique pour accélérer l’implémentation, tout en conservant une compréhension des solutions retenues, de leurs limites et de leurs implications.
